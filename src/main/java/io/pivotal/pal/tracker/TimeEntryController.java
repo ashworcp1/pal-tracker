@@ -1,5 +1,8 @@
 package io.pivotal.pal.tracker;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -12,41 +15,58 @@ import java.util.List;
 @RequestMapping("/time-entries")
 public class TimeEntryController {
     TimeEntryRepository timeEntryRepository;
-    public TimeEntryController(TimeEntryRepository timeEntryRepository) {
+    private final DistributionSummary timeEntrySummary;
+    private final Counter actionCounter;
+
+    public TimeEntryController(TimeEntryRepository timeEntryRepository, MeterRegistry meterRegistry) {
         this.timeEntryRepository = timeEntryRepository;
+        timeEntrySummary = meterRegistry.summary("timeEntry.summary");
+        actionCounter = meterRegistry.counter("timeEntry.actionCounter");
     }
 
     @PostMapping
-    public ResponseEntity<TimeEntry> create(@RequestBody TimeEntry timeEntryToCreate) {
-        return ResponseEntity.status(201).body(timeEntryRepository.create(timeEntryToCreate));
+    public ResponseEntity<TimeEntry> create(@RequestBody TimeEntry timeEntry) {
+        TimeEntry createdTimeEntry = timeEntryRepository.create(timeEntry);
+        actionCounter.increment();
+        timeEntrySummary.record(timeEntryRepository.list().size());
+
+        return new ResponseEntity<>(createdTimeEntry, HttpStatus.CREATED);
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<TimeEntry> read(@PathVariable("id") Long timeEntryId) {
-        TimeEntry entry = timeEntryRepository.find(timeEntryId);
-        if (entry == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    @GetMapping("{id}")
+    public ResponseEntity<TimeEntry> read(@PathVariable Long id) {
+        TimeEntry timeEntry = timeEntryRepository.find(id);
+        if (timeEntry != null) {
+            actionCounter.increment();
+            return new ResponseEntity<>(timeEntry, HttpStatus.OK);
+        } else {
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
-        return ResponseEntity.ok(entry);
     }
 
-    @GetMapping()
+    @GetMapping
     public ResponseEntity<List<TimeEntry>> list() {
-        return ResponseEntity.ok(timeEntryRepository.list());
+        actionCounter.increment();
+        return new ResponseEntity<>(timeEntryRepository.list(), HttpStatus.OK);
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity update(@PathVariable("id") Long timeEntryId, @RequestBody TimeEntry expected) {
-        TimeEntry entry = timeEntryRepository.update(timeEntryId, expected);
-        if (entry == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    @PutMapping("{id}")
+    public ResponseEntity<TimeEntry> update(@PathVariable Long id, @RequestBody TimeEntry timeEntry) {
+        TimeEntry updatedTimeEntry = timeEntryRepository.update(id, timeEntry);
+        if (updatedTimeEntry != null) {
+            actionCounter.increment();
+            return new ResponseEntity<>(updatedTimeEntry, HttpStatus.OK);
+        } else {
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
-        return ResponseEntity.ok(entry);
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity delete(@PathVariable("id") Long timeEntryId) {
-        timeEntryRepository.delete(timeEntryId);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("{id}")
+    public ResponseEntity delete(@PathVariable Long id) {
+        timeEntryRepository.delete(id);
+        actionCounter.increment();
+        timeEntrySummary.record(timeEntryRepository.list().size());
+
+        return new ResponseEntity(HttpStatus.NO_CONTENT);
     }
 }
